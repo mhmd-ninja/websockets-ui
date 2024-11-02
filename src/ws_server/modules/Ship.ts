@@ -49,7 +49,7 @@ export class Ship {
   }
 
   getBorders(): [x: number, y: number][] {
-    return Array.from(this.fragments.keys()).reduce((acc, key) => {
+    return Array.from(this.fragments.keys()).reduce<[x: number, y: number][]>((acc, key) => {
       const [x, y] = key.split('-');
       const neighborCells = getNeighborCells([+x, +y]).filter(
         (cell) => !this.fragments.has(`${cell[0]}-${cell[1]}`),

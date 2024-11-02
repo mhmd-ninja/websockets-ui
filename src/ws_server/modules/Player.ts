@@ -17,7 +17,7 @@ export class Player {
     this.dto = [];
   }
 
-  createShip(position, direction, length) {
+  createShip(position: { x: number; y: number; }, direction: boolean, length: number) {
     this.ships.push(new Ship(position, direction, length));
   }
 

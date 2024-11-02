@@ -38,3 +38,11 @@ export const getNeighborCells = (
   return neighbors;
 };
   
+export const getRandomRow = () => Math.floor(Math.random() * 11);
+
+export const getRandomPosition = () => {
+  return {
+    x: getRandomRow(),
+    y: getRandomRow(),
+  };
+};

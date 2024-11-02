@@ -2,12 +2,17 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { Command } from '../types';
 import { User, userMap } from './modules/User';
 import { error } from 'console';
-import { toSerializedMessage } from './utils';
+import { getRandomPosition, toSerializedMessage } from './utils';
 import { Room, roomMap } from './modules/Room';
+import { Game } from './modules/Game';
+import { Player } from './modules/Player';
+import { Bot } from './modules/Bot';
+import assert from 'node:assert';
 
 const PORT = 3000;
 const ws_server = new WebSocketServer({ port: Number(PORT) });
 
+const gameMap = new Map<string, Game>();
 const socketToUserMap = new Map();
 const userToSocketMap = new Map();
 
@@ -112,14 +117,258 @@ ws_server.on('connection', (ws: WebSocket) => {
                 }
       
                 room.addUser(user);
+
+                const game = new Game();
+                
+                if (room.isFull()) {
+                  room.getUsers().forEach((user: User) => {
+                    const player = new Player(user);
+                    game.addPlayer(player);
+      
+                    const playerSocket = userToSocketMap.get(user.getIndex());
+      
+                    if (!playerSocket) {
+                      console.error(
+                        `[WebSocket]: Cannot find a socket for user: ${user.getIndex()}`,
+                      );
+                      return;
+                    }
+      
+                    playerSocket.send(
+                      toSerializedMessage('create_game', {
+                        idGame: game.getGameId(),
+                        idPlayer: player.getId(),
+                      }),
+                    );
+      
+                    gameMap.set(game.getGameId(), game);
+      
+                    Array.from(roomMap.entries()).forEach(([roomId, room]) => {
+                      const userId = user.getIndex();
+                      if (!room.isFull() && room._hasUser(userId)) {
+                        roomMap.delete(roomId);
+                      }
+                    });
+                  });
+                }
                 ws_server.clients.forEach((client) => {
                   client.send(toSerializedMessage('update_winners', []));
                   client.send(
-                    toSerializedMessage('update_room', Array.from(roomMap.values())),
+                    toSerializedMessage(
+                      'update_room',
+                      Array.from(roomMap.values()).filter((room) => !room.isFull()),
+                    ),
                   );
                 });
+    
                 break;
             }
+            case 'add_ships': {
+              const gameId = dataPayload.gameId;
+              const playerId = dataPayload.indexPlayer;
+              const ships = dataPayload.ships;
+              console.log(JSON.stringify(ships));
+    
+              const game = gameMap.get(gameId);
+              console.assert(game);
+              if (game) {
+                const player = game.getPlayer(playerId);
+                if (player) {
+                  player.setDto(ships);
+                  console.log({ player, playerId });
+                  if (playerId === player.getId()) {
+                    for (const ship of ships) {
+                      player.createShip(ship.position, ship.direction, ship.length);
+                    }
+                  }
+        
+                  if (game.isStartable()) {
+                    game.start();
+        
+                    game.getAllPlayers().forEach((player) => {
+                      if (!player.isBot()) {
+                        const userId = player.getUserId();
+                        const socket = userToSocketMap.get(userId);
+        
+                        socket.send(
+                          toSerializedMessage('start_game', {
+                            ships: player.getDto(),
+                            currentPlayerIndex: player.getId(),
+                          }),
+                        );
+        
+                        socket.send(
+                          toSerializedMessage('turn', {
+                            currentPlayer: game.getTurn(),
+                          }),
+                        );
+                      }
+                    });
+                  }
+                }
+              }
+              break;
+            }
+            case 'attack': {
+              const { gameId, indexPlayer: attackerId } = dataPayload;
+              const randomPosition = getRandomPosition();
+    
+              let x = dataPayload.x ?? randomPosition.x;
+              let y = dataPayload.y ?? randomPosition.y;
+    
+              const game = gameMap.get(gameId);
+              if (!game) {
+                console.error(
+                  `[Game]: Received ${messagePayload.type} command for non-exiting game with id: ${gameId}`,
+                );
+                return;
+              }
+    
+              const playerId = game.getTurn();
+              if (playerId !== attackerId) {
+                console.error(
+                  `[Game]: Game id: ${gameId}. Attack does not match by indexPlayer`,
+                );
+                return;
+              }
+    
+              const result = game.attack(playerId, {
+                x,
+                y,
+              });
+              game.getAllPlayers().forEach((player) => {
+                if (!player.isBot()) {
+                  const userId = player.getUserId();
+                  const socket = userToSocketMap.get(userId);
+    
+                  socket.send(
+                    toSerializedMessage('attack', {
+                      position: {
+                        x,
+                        y,
+                      },
+                      currentPlayer: attackerId,
+                      status: result?.status,
+                    }),
+                  );
+    
+                  if (result?.status === 'killed') {
+                    result.borders.forEach((cell) => {
+                      socket.send(
+                        toSerializedMessage('attack', {
+                          position: {
+                            x: cell[0],
+                            y: cell[1],
+                          },
+                          currentPlayer: attackerId,
+                          status: 'miss',
+                        }),
+                      );
+                    });
+    
+                    if (result.hasLost) {
+                      socket.send(
+                        toSerializedMessage('finish', {
+                          winPlayer: attackerId,
+                        }),
+                      );
+                    }
+                  }
+    
+                  if (!result?.hasLost) {
+                    socket.send(
+                      toSerializedMessage('turn', {
+                        currentPlayer: game.getTurn(),
+                      }),
+                    );
+                  }
+                }
+              });
+    
+              if (result?.hasLost) {
+                const user = userMap.get(attackerId);
+               if(user) {
+                const winCount = winnersMap.get(user.getName()) || 0;
+                winnersMap.set(user.getName(), winCount + 1);
+    
+                game.getAllPlayers().forEach((player) => {
+                  if (!player.isBot()) {
+                    const userId = player.getUserId();
+                    const socket = userToSocketMap.get(userId);
+                    socket.send(
+                      toSerializedMessage(
+                        'update_winners',
+                        Array.from(winnersMap.entries()).map(([key, value]) => {
+                          return {
+                            name: key,
+                            wins: value,
+                          };
+                        }),
+                      ),
+                    );
+                  }
+                });
+                gameMap.delete(game.getGameId());
+               }
+              }
+    
+              const opponent = game.getOpponentByPlayerId(attackerId);
+              if (opponent?.isBot()) {
+                const positionToAttack = (opponent as Bot).getNextAttack();
+                const result = game.attack(opponent.getId(), {
+                  ...positionToAttack,
+                });
+    
+                ws.send(
+                  toSerializedMessage('attack', {
+                    position: {
+                      ...positionToAttack,
+                    },
+                    currentPlayer: opponent?.getId(),
+                    status: result?.status,
+                  }),
+                );
+    
+                if (!result?.hasLost) {
+                  setTimeout(
+                    () =>
+                      ws.send(
+                        toSerializedMessage('turn', {
+                          currentPlayer: game.getTurn(),
+                        }),
+                      ),
+                    1000,
+                  );
+                }
+    
+                //
+              }
+              break;
+            }
+            case 'single_play': {
+              const user = socketToUserMap.get(ws);
+              assert.ok(user);
+    
+              const game = new Game();
+              game.addPlayer(new Player(user));
+              game.addPlayer(new Bot());
+    
+              gameMap.set(game.getGameId(), game);
+    
+              ws.send(
+                toSerializedMessage('create_game', {
+                  idGame: game.getGameId(),
+                  idPlayer: user.getIndex(),
+                }),
+              );
+    
+              break;
+            }
+    
+            default:
+              console.log(
+                `[WebSocket]: Received message type ${messagePayload.type}`,
+              );
         }
     });
     

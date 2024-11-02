@@ -12,6 +12,10 @@ export class Room {
     getRoomId(): string {
       return this.roomId;
     }
+
+    getUsers(): User[] {
+      return this.roomUsers;
+    }
   
     addUser(user: User): void {
       this.roomUsers.push(user);
