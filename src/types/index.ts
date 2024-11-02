@@ -9,3 +9,5 @@ export type Command =
   | 'finish'
   | 'update_room'
   | 'update_winners';
+
+export type AttackResult = 'miss' | 'killed' | 'shot' | 'retry';

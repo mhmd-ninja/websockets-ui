@@ -9,6 +9,10 @@ const PORT = 3000;
 const ws_server = new WebSocketServer({ port: Number(PORT) });
 
 const socketToUserMap = new Map();
+const userToSocketMap = new Map();
+
+
+const winnersMap = new Map<string, number>();
 
 ws_server.on('connection', (ws: WebSocket) => {
     console.log('Client connected');
@@ -17,16 +21,6 @@ ws_server.on('connection', (ws: WebSocket) => {
         const dataPayload = JSON.parse(messagePayload.data || '{}');
         console.log(`Received message: ${messagePayload.type}`);
         console.log(`Received dataPayload: ${JSON.stringify(dataPayload)}`);
-
-        setTimeout(() => {
-            ws.send(
-                toSerializedMessage('reg', {
-                    name: 'dataPayload.name',
-                    index: 'user.getIndex()',
-                    error: false,
-                }),
-            );
-        }, 5000)
 
         switch (messagePayload.type as Command) {
             case 'reg': {
@@ -44,22 +38,27 @@ ws_server.on('connection', (ws: WebSocket) => {
                 const user = new User(dataPayload.name);
                 userMap.set(user.getIndex(), user);
                 socketToUserMap.set(ws, user);
-                console.log(userMap);
-                console.log(socketToUserMap);
+                userToSocketMap.set(user.getIndex(), ws);
 
-                // setTimeout(() => {
-                //     ws.send(
-                //         toSerializedMessage('reg', {
-                //             name: 'dataPayload.name',
-                //             index: 'user.getIndex()',
-                //             error: false,
-                //         }),
-                //     );
-                // }, 5000)
+                ws.send(
+                  toSerializedMessage('reg', {
+                    name: dataPayload.name,
+                    index: user.getIndex(),
+                    error: false,
+                  }),
+                );
+
                 ws_server.clients.forEach((client) => {
-                    client.send(toSerializedMessage('update_winners', []));
+                    client.send(toSerializedMessage('update_winners', 
+                      Array.from(winnersMap.entries()).map(([key, value]) => ({
+                        name: key,
+                        wins: value,
+                      }))
+                    ));
                     client.send(
-                      toSerializedMessage('update_room', Array.from(roomMap.values())),
+                      toSerializedMessage('update_room', 
+                        Array.from(roomMap.values()).filter((room) => !room.isFull()),
+                      ),
                     );
                   });
                 break;
@@ -75,10 +74,18 @@ ws_server.on('connection', (ws: WebSocket) => {
                 }
 
                 const room = new Room();
+                room.addUser(user);
                 roomMap.set(room.getRoomId(), room);
+
+                console.log(
+                  `[Game]: added ${user.getIndex()} to room: ${room.getRoomId()}`,
+                );
+
                 ws_server.clients.forEach((client) => {
                     client.send(
-                      toSerializedMessage('update_room', Array.from(roomMap.values())),
+                      toSerializedMessage('update_room', 
+                        Array.from(roomMap.values()).filter((room) => !room.isFull())
+                      ),
                     );
                   });
                 break;

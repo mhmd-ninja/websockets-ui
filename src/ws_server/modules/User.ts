@@ -12,6 +12,10 @@ export class User {
     getIndex() {
         return this.index;
     }
+
+    getName() {
+        return this.name;
+    }
 }
 
 export const userMap = new Map<string, User>();
